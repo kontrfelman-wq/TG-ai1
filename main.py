@@ -6,7 +6,7 @@ import base64
 from datetime import datetime
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from openai import AsyncOpenAI
+from groq import Groq
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -15,8 +15,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-OPENAI_BASE_URL = os.environ.get("AI_INTEGRATIONS_OPENAI_BASE_URL")
-OPENAI_API_KEY = os.environ.get("AI_INTEGRATIONS_OPENAI_API_KEY")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 _raw_allowed = os.environ.get("ALLOWED_USER_IDS", "")
 ALLOWED_USER_IDS: set[int] = {
@@ -27,10 +26,9 @@ HISTORY_LIMIT = 200
 CONTEXT_LIMIT = 30
 DB_PATH = "chat_history.db"
 
-# Моделі у порядку пріоритету — якщо перша не відповідає, пробує наступну
-MODELS = ["gpt-4.1-mini", "gpt-4.1", "gpt-4o-mini"]
+MODELS = ["mixtral-8x7b-32768", "llama2-70b-4096", "gemma-7b-it"]
 
-client = AsyncOpenAI(base_url=OPENAI_BASE_URL, api_key=OPENAI_API_KEY)
+client = Groq(api_key=GROQ_API_KEY)
 
 SYSTEM_PROMPT = (
     "Ти корисний AI-асистент. Відповідай чітко, зрозуміло та по суті. "
@@ -114,7 +112,7 @@ async def deny(update: Update) -> None:
 
 # --- Ядро: запит до AI ---
 
-async def ask_ai(user_id: int, user_message: dict, save_user_text: str) -> str:
+def ask_ai(user_id: int, user_message: dict, save_user_text: str) -> str:
     ensure_history(user_id)
     user_histories[user_id].append(user_message)
 
@@ -124,10 +122,10 @@ async def ask_ai(user_id: int, user_message: dict, save_user_text: str) -> str:
     last_error = None
     for model in MODELS:
         try:
-            response = await client.chat.completions.create(
+            response = client.chat.completions.create(
                 model=model,
                 messages=messages,
-                max_completion_tokens=1024,
+                max_tokens=1024,
             )
             bot_reply = response.choices[0].message.content
             if not bot_reply:
@@ -214,7 +212,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "Просто напиши мені будь-яке запитання.\n"
         "Я пам'ятаю нашу розмову (до 200 у базі, 30 у контексті).\n\n"
         "Також підтримую:\n"
-        "Голосові повідомлення\n"
         "Фотографії (з підписом або без)\n\n"
         "Команди:\n"
         "/start — відновити розмову\n"
@@ -237,7 +234,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     try:
         user_text = update.message.text
-        bot_reply = await ask_ai(
+        bot_reply = ask_ai(
             user.id,
             user_message={"role": "user", "content": user_text},
             save_user_text=user_text
@@ -246,40 +243,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception as e:
         logger.error(f"Помилка: {e}")
         await update.message.reply_text("Виникла помилка. Спробуй ще раз.")
-
-
-async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    if not is_allowed(user.id):
-        await deny(update)
-        return
-
-    await update.message.chat.send_action("typing")
-
-    try:
-        voice_file = await context.bot.get_file(update.message.voice.file_id)
-        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
-            await voice_file.download_to_drive(tmp.name)
-            tmp_path = tmp.name
-
-        with open(tmp_path, "rb") as f:
-            transcript = await client.audio.transcriptions.create(
-                model="gpt-4o-mini-transcribe",
-                file=("voice.ogg", f, "audio/ogg"),
-            )
-        user_text = transcript.text
-        logger.info(f"Голос розпізнано: {user_text[:80]}")
-
-        bot_reply = await ask_ai(
-            user.id,
-            user_message={"role": "user", "content": user_text},
-            save_user_text=f"[Голос]: {user_text}"
-        )
-        await update.message.reply_text(f"Ти сказав: {user_text}\n\n{bot_reply}")
-
-    except Exception as e:
-        logger.error(f"Помилка голосу: {e}")
-        await update.message.reply_text("Не вдалось обробити голосове повідомлення. Спробуй ще раз.")
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -307,7 +270,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}}
             ]
         }
-        bot_reply = await ask_ai(
+        bot_reply = ask_ai(
             user.id,
             user_message=user_message,
             save_user_text=f"[Фото: {caption}]"
@@ -324,8 +287,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 def main() -> None:
     if not TELEGRAM_BOT_TOKEN:
         raise ValueError("TELEGRAM_BOT_TOKEN не встановлено!")
-    if not OPENAI_BASE_URL or not OPENAI_API_KEY:
-        raise ValueError("AI_INTEGRATIONS змінні не встановлено!")
+    if not GROQ_API_KEY:
+        raise ValueError("GROQ_API_KEY не встановлено!")
 
     db_init()
 
@@ -342,7 +305,6 @@ def main() -> None:
     app.add_handler(CommandHandler("myid", myid))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     logger.info(f"Бот запущено! Моделі: {', '.join(MODELS)}")
