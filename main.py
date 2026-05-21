@@ -26,7 +26,7 @@ HISTORY_LIMIT = 200
 CONTEXT_LIMIT = 30
 DB_PATH = "chat_history.db"
 
-MODELS = ["mixtral-8x7b-32768", "llama2-70b-4096", "gemma-7b-it"]
+MODELS = ["llama-3.1-70b-versatile", "mixtral-8x7b-32768-32k", "llama-3.1-8b-instant"]
 
 client = Groq(api_key=GROQ_API_KEY)
 
