@@ -6,7 +6,7 @@ import base64
 from datetime import datetime
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from groq import Groq
+from openai import OpenAI
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -15,7 +15,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 _raw_allowed = os.environ.get("ALLOWED_USER_IDS", "")
 ALLOWED_USER_IDS: set[int] = {
@@ -26,8 +26,8 @@ HISTORY_LIMIT = 200
 CONTEXT_LIMIT = 30
 DB_PATH = "chat_history.db"
 
-MODELS = ["llama-3.1-70b-versatile", "mixtral-8x7b-32768-32k", "llama-3.1-8b-instant"]
-client = Groq(api_key=GROQ_API_KEY)
+MODELS = ["gpt-4o-mini", "gpt-3.5-turbo"]
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 SYSTEM_PROMPT = (
     "Ти корисний AI-асистент. Відповідай чітко, зрозуміло та по суті. "
@@ -286,8 +286,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 def main() -> None:
     if not TELEGRAM_BOT_TOKEN:
         raise ValueError("TELEGRAM_BOT_TOKEN не встановлено!")
-    if not GROQ_API_KEY:
-        raise ValueError("GROQ_API_KEY не встановлено!")
+    if not OPENAI_API_KEY:
+        raise ValueError("OPENAI_API_KEY не встановлено!")
 
     db_init()
 
